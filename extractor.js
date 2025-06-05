@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { Writable } = require('stream'); // Necesario para la estructura
 
 // Directorio que contiene los archivos de código a procesar
 const CODE_DATA_DIR = path.join(__dirname, 'codeData');
@@ -17,22 +18,65 @@ const CODE_EXTENSIONS = [
   '.md', '.sh', '.bash', '.sql'
 ];
 
+// Patrones (nombres de directorio/archivo) a ignorar
+const IGNORE_PATTERNS = [
+    'node_modules',
+    '.git',
+    '.vscode',
+    'dist',
+    'build',
+    'coverage',
+    '.DS_Store' // Común en macOS
+];
+
+// Función para verificar si una ruta debe ser ignorada
+function shouldIgnore(entryPath) {
+    const baseName = path.basename(entryPath);
+    return IGNORE_PATTERNS.some(pattern => baseName === pattern);
+}
+
 // Función para verificar si un archivo es un archivo de código
 function isCodeFile(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   return CODE_EXTENSIONS.includes(ext);
 }
 
-// Función para extraer código de forma recursiva
+// Nueva función para obtener la estructura del directorio
+async function getDirectoryStructure(dirPath, indent = '', outputStream) {
+    try {
+        const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(dirPath, entry.name);
+            if (shouldIgnore(fullPath)) {
+                continue; // Saltar si coincide con un patrón de ignorar
+            }
+            outputStream.write(`${indent}${entry.isDirectory() ? '┗━━ ' : '┣━━ '}${entry.name}\n`);
+            if (entry.isDirectory()) {
+                await getDirectoryStructure(fullPath, indent + '    ', outputStream);
+            }
+        }
+    } catch (error) {
+        console.error(`Error al leer la estructura del directorio ${dirPath}:`, error.message);
+        outputStream.write(`${indent}┣━━ ERROR AL LEER DIRECTORIO: ${path.basename(dirPath)}\n`);
+    }
+}
+
+// Función para extraer código de forma recursiva (modificada para ignorar)
 async function extractCodeRecursive(dirPath, basePath, outputStream) {
   try {
     // Leer los archivos en el directorio actual
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
-    
+
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
       const relativePath = path.relative(basePath, fullPath);
-      
+
+      // Ignorar si coincide con patrones
+      if (shouldIgnore(fullPath)) {
+          console.log(`Ignorando: ${relativePath}`);
+          continue;
+      }
+
       if (entry.isDirectory()) {
         // Si es un directorio, procesarlo recursivamente
         await extractCodeRecursive(fullPath, basePath, outputStream);
@@ -56,11 +100,14 @@ async function extractCodeRecursive(dirPath, basePath, outputStream) {
       }
     }
   } catch (error) {
-    console.error(`Error al leer el directorio ${dirPath}:`, error.message);
+    // Solo mostrar error si no es porque el directorio fue ignorado
+    if (!shouldIgnore(dirPath)) {
+        console.error(`Error al leer el directorio ${dirPath}:`, error.message);
+    }
   }
 }
 
-// Función principal
+// Función principal (modificada para añadir estructura y manejar errores de directorio)
 async function main() {
   try {
     console.log(`Iniciando extracción de código desde: ${CODE_DATA_DIR}`);
@@ -81,8 +128,16 @@ async function main() {
     // Escribir encabezado en el archivo de salida
     outputStream.write(`EXTRACCIÓN DE CÓDIGO PARA ENTRENAMIENTO DE IA\n`);
     outputStream.write(`Fecha de extracción: ${new Date().toISOString()}\n`);
+    outputStream.write(`Directorio base: ${CODE_DATA_DIR}\n`); // Añadir directorio base
     outputStream.write(`${'='.repeat(80)}\n\n`);
-    
+
+    // Escribir la estructura del directorio
+    outputStream.write(`ESTRUCTURA DEL PROYECTO:\n`);
+    outputStream.write(`${path.basename(CODE_DATA_DIR)}\n`); // Nombre del directorio raíz
+    await getDirectoryStructure(CODE_DATA_DIR, '    ', outputStream);
+    outputStream.write(`\n${'='.repeat(80)}\n\n`);
+    outputStream.write(`CONTENIDO DE LOS ARCHIVOS:\n`);
+
     // Procesar todos los archivos recursivamente
     await extractCodeRecursive(CODE_DATA_DIR, CODE_DATA_DIR, outputStream);
     
@@ -92,6 +147,10 @@ async function main() {
     console.log(`\nProceso completado. El código extraído se ha guardado en: ${OUTPUT_FILE}`);
   } catch (error) {
     console.error('Error en el proceso principal:', error.message);
+    // Asegurarse de cerrar el stream si hubo un error antes de end()
+    if (outputStream && !outputStream.closed) {
+        outputStream.end();
+    }
   }
 }
 

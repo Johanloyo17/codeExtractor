@@ -108,51 +108,51 @@ async function extractCodeRecursive(dirPath, basePath, outputStream) {
 }
 
 // Función principal (modificada para añadir estructura y manejar errores de directorio)
-async function main() {
+async function extractCode(inputDirPath, outputFilePath) {
+  let outputStream;
   try {
-    console.log(`Iniciando extracción de código desde: ${CODE_DATA_DIR}`);
+    console.log(`Iniciando extracción de código desde: ${inputDirPath}`);
     
     // Verificar si el directorio existe
     try {
-      await fs.promises.access(CODE_DATA_DIR);
+      await fs.promises.access(inputDirPath);
     } catch (error) {
-      console.error(`El directorio ${CODE_DATA_DIR} no existe. Creándolo...`);
-      await fs.promises.mkdir(CODE_DATA_DIR, { recursive: true });
-      console.log(`Directorio ${CODE_DATA_DIR} creado. Por favor, coloca tus archivos de código ahí y vuelve a ejecutar el script.`);
-      return;
+      console.error(`El directorio ${inputDirPath} no existe.`);
+      throw new Error(`El directorio de entrada no es válido: ${inputDirPath}`);
     }
     
     // Crear stream de escritura para el archivo de salida
-    const outputStream = fs.createWriteStream(OUTPUT_FILE);
+    outputStream = fs.createWriteStream(outputFilePath);
     
     // Escribir encabezado en el archivo de salida
     outputStream.write(`EXTRACCIÓN DE CÓDIGO PARA ENTRENAMIENTO DE IA\n`);
     outputStream.write(`Fecha de extracción: ${new Date().toISOString()}\n`);
-    outputStream.write(`Directorio base: ${CODE_DATA_DIR}\n`); // Añadir directorio base
+    outputStream.write(`Directorio base: ${inputDirPath}\n`); // Añadir directorio base
     outputStream.write(`${'='.repeat(80)}\n\n`);
 
     // Escribir la estructura del directorio
     outputStream.write(`ESTRUCTURA DEL PROYECTO:\n`);
-    outputStream.write(`${path.basename(CODE_DATA_DIR)}\n`); // Nombre del directorio raíz
-    await getDirectoryStructure(CODE_DATA_DIR, '    ', outputStream);
+    outputStream.write(`${path.basename(inputDirPath)}\n`); // Nombre del directorio raíz
+    await getDirectoryStructure(inputDirPath, '    ', outputStream);
     outputStream.write(`\n${'='.repeat(80)}\n\n`);
     outputStream.write(`CONTENIDO DE LOS ARCHIVOS:\n`);
 
     // Procesar todos los archivos recursivamente
-    await extractCodeRecursive(CODE_DATA_DIR, CODE_DATA_DIR, outputStream);
+    await extractCodeRecursive(inputDirPath, inputDirPath, outputStream);
     
     // Cerrar el stream de escritura
     outputStream.end();
     
-    console.log(`\nProceso completado. El código extraído se ha guardado en: ${OUTPUT_FILE}`);
+    console.log(`\nProceso completado. El código extraído se ha guardado en: ${outputFilePath}`);
+    return true; // Indicar éxito
   } catch (error) {
-    console.error('Error en el proceso principal:', error.message);
+    console.error('Error en el proceso principal de extracción de código:', error.message);
     // Asegurarse de cerrar el stream si hubo un error antes de end()
     if (outputStream && !outputStream.closed) {
         outputStream.end();
     }
+    return false; // Indicar fallo
   }
 }
 
-// Ejecutar la función principal
-main();
+module.exports = { extractCode };

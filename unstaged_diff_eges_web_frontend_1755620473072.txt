@@ -1,0 +1,405 @@
+diff --git a/src/features/AppointmentsScheduler/AppointmentsScheduler.tsx b/src/features/AppointmentsScheduler/AppointmentsScheduler.tsx
+index fd8bbf4..8f341bc 100644
+--- a/src/features/AppointmentsScheduler/AppointmentsScheduler.tsx
++++ b/src/features/AppointmentsScheduler/AppointmentsScheduler.tsx
+@@ -11,20 +11,19 @@ import {
+   KendoSchedulerView,
+   PageHeader,
+ } from './components';
++import { useFirstAvailableDateTime } from './hooks/useFirstAvailableDateTime';
+ 
+ const { Content } = Layout;
+ 
+ export const AppointmentsScheduler = () => {
+   const [selectedSlotDate, setSelectedSlotDate] = useState<Date | null>(null);
+-
+   const [isSameDay, setIsSameDay] = useState<boolean>(false);
+-
+   const [showFilters, setShowFilters] = useState<boolean>(true);
+   const [showSidebar, setShowSidebar] = useState<boolean>(false);
++  const [appointmentQuantity, setAppointmentQuantity] = useState<number | null>(null);
+ 
+-  const [appointmentQuantity, setAppointmentQuantity] = useState<number | null>(
+-    null
+-  );
++  // Hook para datos del primer turno disponible
++  const { dateObject: firstAvailableDate, hasData: hasFirstAvailableData } = useFirstAvailableDateTime();
+ 
+   const handleFiltersApplied = () => {
+     setSelectedSlotDate(null);
+@@ -50,6 +49,29 @@ export const AppointmentsScheduler = () => {
+     [selectedSlotDate]
+   );
+ 
++  /**
++   *callback para navegar al primer turno disponible desde el icono
++   *
++   */
++  const handleNavigateToFirstAvailable = useCallback(()  => {
++    if (!firstAvailableDate || !hasFirstAvailableData) {
++      showError('No hay primer turno disponible para navegar');
++      return;
++    }
++
++    if (!selectedSlotDate) {
++      setIsSameDay(false);
++      setSelectedSlotDate(firstAvailableDate);
++      return;
++    }
++
++    setIsSameDay(checkIsSameDay(selectedSlotDate, firstAvailableDate));
++    setSelectedSlotDate(firstAvailableDate);
++
++    // Nota: El scroll al horario específico se maneja en KendoSchedulerView
++    // cuando detecta cambio en selectedSlotDate hacia firstAvailableDate
++  }, [firstAvailableDate, hasFirstAvailableData, selectedSlotDate]);
++
+   const handleToggleShowFilters = () => {
+     setShowFilters((current) => !current);
+   };
+@@ -95,6 +117,7 @@ export const AppointmentsScheduler = () => {
+             <PageHeader
+               showFilters={showFilters}
+               handleToggleShowFilters={handleToggleShowFilters}
++              onNavigateToFirstAvailable={handleNavigateToFirstAvailable}
+             />
+             <div className={styles['scheduler-body']}>
+               <KendoSchedulerView
+@@ -117,4 +140,4 @@ export const AppointmentsScheduler = () => {
+       </div>
+     </PageContainer>
+   );
+-};
++};
+\ No newline at end of file
+diff --git a/src/features/AppointmentsScheduler/components/KendoSchedulerView/KendoSchedulerView.tsx b/src/features/AppointmentsScheduler/components/KendoSchedulerView/KendoSchedulerView.tsx
+index 1a85e0b..e372f2b 100644
+--- a/src/features/AppointmentsScheduler/components/KendoSchedulerView/KendoSchedulerView.tsx
++++ b/src/features/AppointmentsScheduler/components/KendoSchedulerView/KendoSchedulerView.tsx
+@@ -18,7 +18,7 @@ import {
+   schedulerScrollTo,
+   WORK_DAY_START,
+   WORK_DAY_END,
+-  WORK_START_TIME,
++  // WORK_START_TIME,
+   SLOT_DURATION,
+   SLOT_DIVISION,
+   FROM_DATE_COMPRESSED_FORMAT,
+@@ -28,6 +28,7 @@ import styles from './styles/KendoSchedulerView.module.css';
+ import { SchedulerViewType } from '~/features/AppointmentsScheduler/types/scheduler.types';
+ import { SCHEDULER_VIEW } from '~/features/AppointmentsScheduler/utils';
+ import { useFirstAvailableAppointmentsSummaryData } from '~/features/AppointmentsScheduler/hooks';
++import { useFirstAvailableTimeSlot } from './hooks/useFirstAvailableTimeSlot';
+ 
+ const COMPRESSED_DATE_FORMAT = `${FROM_DATE_COMPRESSED_FORMAT} - ${TO_DATE_COMPRESSED_FORMAT}`;
+ 
+@@ -50,7 +51,7 @@ export const KendoSchedulerView: React.FC<Props> = ({
+   const ofertaResumidaMensual = useAppointmentsSummaryStore(
+     (state) => state?.ofertaResumidaMensual
+   );
+-
++  const firstAvailableTimeSlot = useFirstAvailableTimeSlot();
+   const { firstAvailableDay } = useFirstAvailableAppointmentsSummaryData();
+ 
+   const {
+@@ -76,8 +77,31 @@ export const KendoSchedulerView: React.FC<Props> = ({
+   }, [error, isBeforeTodayError]);
+ 
+   useEffect(() => {
+-    schedulerScrollTo(WORK_START_TIME);
+-  }, [selectedView]);
++    const timer = setTimeout(() => {
++      console.log('firstAvailableTimeSlot 1 ', firstAvailableTimeSlot);
++      schedulerScrollTo(firstAvailableTimeSlot);
++    }, 100);
++
++    return () => clearTimeout(timer);
++  }, [selectedView, firstAvailableTimeSlot]);
++
++  useEffect(() => {
++    // Detectar si selectedDate cambió a firstAvailableDay
++    // Esto indica navegación desde el icono de exclamación
++    if (
++      selectedDate &&
++      firstAvailableDay &&
++      selectedDate.getTime() === firstAvailableDay.getTime()
++    ) {
++      const timer = setTimeout(() => {
++        console.log('firstAvailableTimeSlot 2 ', firstAvailableTimeSlot);
++
++        schedulerScrollTo(firstAvailableTimeSlot);
++      }, 150); // Delay ligeramente mayor para navegación desde icono
++
++      return () => clearTimeout(timer);
++    }
++  }, [selectedDate, firstAvailableDay, firstAvailableTimeSlot]);
+ 
+   const handleViewChange = (e: SchedulerViewChangeEvent) => {
+     if (e?.value === SCHEDULER_VIEW.MONTH) {
+diff --git a/src/features/AppointmentsScheduler/components/PageHeader/PageHeader.tsx b/src/features/AppointmentsScheduler/components/PageHeader/PageHeader.tsx
+index ae611b3..448985f 100644
+--- a/src/features/AppointmentsScheduler/components/PageHeader/PageHeader.tsx
++++ b/src/features/AppointmentsScheduler/components/PageHeader/PageHeader.tsx
+@@ -16,11 +16,13 @@ const { Title } = Typography;
+ type Props = {
+   showFilters: boolean;
+   handleToggleShowFilters: () => void;
++  onNavigateToFirstAvailable: () => void; 
+ };
+ 
+ export const PageHeader: React.FC<Props> = ({
+   showFilters,
+   handleToggleShowFilters,
++  onNavigateToFirstAvailable
+ }) => {
+   const firstAvailableDate = useAppointmentsSummaryStore(
+     (state) => state?.primerOfertaDisponible
+@@ -49,7 +51,11 @@ export const PageHeader: React.FC<Props> = ({
+           Selección de Turnos
+         </Title>
+ 
+-        <FirstAvailableIcon firstAvailableDate={firstAvailableDate} />
++        <FirstAvailableIcon
++          firstAvailableDate={firstAvailableDate}
++          onNavigateToFirstAvailable={onNavigateToFirstAvailable}
++        />
++
+       </div>
+ 
+       {/* Segunda línea: Filtros aplicados */}
+diff --git a/src/features/AppointmentsScheduler/components/PageHeader/components/FirstAvailableIcon/FirstAvailableIcon.module.css b/src/features/AppointmentsScheduler/components/PageHeader/components/FirstAvailableIcon/FirstAvailableIcon.module.css
+index 3b761c2..8f99a1c 100644
+--- a/src/features/AppointmentsScheduler/components/PageHeader/components/FirstAvailableIcon/FirstAvailableIcon.module.css
++++ b/src/features/AppointmentsScheduler/components/PageHeader/components/FirstAvailableIcon/FirstAvailableIcon.module.css
+@@ -1,4 +1,4 @@
+-
++/* Contenedor base del ícono */
+ .icon-container {
+   display: inline-flex;
+   align-items: center;
+@@ -9,13 +9,36 @@
+   margin-right: -4px;
+   cursor: help;
+   border-radius: 4px;
+-  transition: background-color 0.3s ease;
++  transition: background-color 0.3s ease, transform 0.2s ease;
+ }
+ 
++/* Estado hover para contenedor base */
+ .icon-container:hover {
+   background-color: rgba(64, 169, 255, 0.1);
+ }
+ 
++/* Contenedor cuando es clickeable */
++.icon-container-clickable {
++  cursor: pointer;
++}
++
++.icon-container-clickable:hover {
++  background-color: rgba(64, 169, 255, 0.15);
++  transform: scale(1.05);
++}
++
++.icon-container-clickable:active {
++  background-color: rgba(64, 169, 255, 0.2);
++  transform: scale(0.98);
++}
++
++/* Focus visible para accesibilidad */
++.icon-container-clickable:focus-visible {
++  outline: 2px solid #40a9ff;
++  outline-offset: 2px;
++}
++
++/* Ícono base */
+ .exclamation-icon {
+   font-size: 24px;
+   color: #40a9ff !important; 
+@@ -27,6 +50,17 @@
+   transform: scale(1.1);
+ }
+ 
++/* Ícono cuando es clickeable */
++.exclamation-icon-clickable {
++  color: #1890ff !important;
++}
++
++.exclamation-icon-clickable:hover {
++  color: #096dd9 !important;
++  transform: scale(1.15);
++}
++
++/* Estado de carga */
+ .exclamation-icon.loading {
+   color: #40a9ff !important;
+   animation: pulse 2s infinite;
+diff --git a/src/features/AppointmentsScheduler/components/PageHeader/components/FirstAvailableIcon/FirstAvailableIcon.tsx b/src/features/AppointmentsScheduler/components/PageHeader/components/FirstAvailableIcon/FirstAvailableIcon.tsx
+index 9ddbc51..5aa0ccd 100644
+--- a/src/features/AppointmentsScheduler/components/PageHeader/components/FirstAvailableIcon/FirstAvailableIcon.tsx
++++ b/src/features/AppointmentsScheduler/components/PageHeader/components/FirstAvailableIcon/FirstAvailableIcon.tsx
+@@ -1,62 +1,79 @@
+-import React, { useMemo } from 'react';
++import React from 'react';
+ import { Tooltip } from 'antd';
+ import { ExclamationCircleFilled } from '@ant-design/icons';
+-import {
+-  LOCALE_CODE_ES,
+-  capitalizeStringChar,
+-} from '~/features/AppointmentsScheduler/utils';
++import { useFirstAvailableDateTime } from '~/features/AppointmentsScheduler/hooks/useFirstAvailableDateTime';
+ import styles from './FirstAvailableIcon.module.css';
+ 
+ type Props = {
+-  firstAvailableDate: string | undefined; // Tipo exacto del store
++  firstAvailableDate: string | undefined; // Mantenemos para compatibilidad
++  onNavigateToFirstAvailable?: () => void; // Nueva prop opcional
+ };
+ 
+ /**
+- * Ícono que muestra la primera fecha disponible en un tooltip
+- * Se ubica al final del PageHeader
++ * Ícono que muestra la primera fecha y hora disponible en un tooltip
++ * Permite navegar al primer turno disponible al hacer clic
+  */
+-export const FirstAvailableIcon: React.FC<Props> = ({ firstAvailableDate }) => {
+-  const loading = !firstAvailableDate;
+-  const formattedDate = useMemo(() => {
+-    if (!firstAvailableDate) return null;
++export const FirstAvailableIcon: React.FC<Props> = ({ 
++  firstAvailableDate, 
++  onNavigateToFirstAvailable 
++}) => {
++  // Usar el hook unificado para obtener toda la información
++  const { formattedTooltip, hasData } = useFirstAvailableDateTime();
++  
++  // Determinar si está cargando basado en ambas fuentes
++  const loading = !firstAvailableDate || !hasData;
++  
++  // Determinar si es clickeable
++  const isClickable = Boolean(hasData && onNavigateToFirstAvailable);
+ 
+-    // Convertir string ISO a Date
+-    const dateObject = new Date(firstAvailableDate);
++  const handleClick = () => {
++    if (isClickable) {
++      onNavigateToFirstAvailable?.();
++    }
++  };
+ 
+-    // Verificar que la fecha sea válida
+-    if (isNaN(dateObject.getTime())) return null;
++  // Determinar el cursor y eventos apropiados
++  const interactionProps = isClickable
++    ? {
++        onClick: handleClick,
++        role: 'button' as const,
++        tabIndex: 0,
++        'aria-label': 'Navegar al primer turno disponible',
++        style: { cursor: 'pointer' }
++      }
++    : {
++        'aria-label': 'Primer turno disponible',
++        style: { cursor: loading ? 'default' : 'help' }
++      };
+ 
+-    const fullDate = dateObject.toLocaleDateString(LOCALE_CODE_ES, {
+-      weekday: 'long',
+-      day: 'numeric',
+-      month: 'long',
+-      year: 'numeric',
+-    });
+-
+-    return capitalizeStringChar(0, fullDate);
+-  }, [firstAvailableDate]);
+-
+-  const tooltipContent = useMemo(() => {
+-    if (loading) return 'Cargando primera fecha disponible...';
+-    if (!formattedDate) return 'No hay fechas disponibles';
+-    return `Primer turno disponible: ${formattedDate}`;
+-  }, [loading, formattedDate]);
++  // Manejar Enter/Space para accesibilidad
++  const handleKeyDown = (event: React.KeyboardEvent) => {
++    if (isClickable && (event.key === 'Enter' || event.key === ' ')) {
++      event.preventDefault();
++      handleClick();
++    }
++  };
+ 
+   return (
+     <Tooltip
+-      title={tooltipContent}
++      title={formattedTooltip}
+       placement="bottom"
+       mouseEnterDelay={0.3}
+       mouseLeaveDelay={0}
+     >
+       <div
+-        className={styles['icon-container']}
+-        aria-label="Primer turno disponible"
++        className={`${styles['icon-container']} ${
++          isClickable ? styles['icon-container-clickable'] : ''
++        }`}
++        {...interactionProps}
++        onKeyDown={isClickable ? handleKeyDown : undefined}
+       >
+         <ExclamationCircleFilled
+-          className={`${styles['exclamation-icon']} ${loading ? styles['loading'] : ''}`}
++          className={`${styles['exclamation-icon']} ${
++            loading ? styles['loading'] : ''
++          } ${isClickable ? styles['exclamation-icon-clickable'] : ''}`}
+         />
+       </div>
+     </Tooltip>
+   );
+-};
++};
+\ No newline at end of file
+diff --git a/src/features/AppointmentsScheduler/hooks/index.ts b/src/features/AppointmentsScheduler/hooks/index.ts
+index a554b71..23deeb9 100644
+--- a/src/features/AppointmentsScheduler/hooks/index.ts
++++ b/src/features/AppointmentsScheduler/hooks/index.ts
+@@ -4,8 +4,8 @@ export { useIsTurnosCombo } from './useIsTurnosCombo';
+ export { useAppliedFilterPracticeTurnosReserva } from './useAppliedFilterPracticeTurnosReserva';
+ export { useFirstAvailableAppointmentsSummaryData } from './useFirstAvailableSummaryAppointmentsData';
+ export { useSchedulerMonthDateRangeFromList } from './useSchedulerMonthDateRangeFromList';
+-export { useFirstAvailableDate } from './useFirstAvailableDate';
+ export { useEquipmentPlacesFilter } from './useEquipmentPlacesFilter';
+ export { usePatientPlacesFilter } from './usePatientPlacesFilter';
+ export { useAppliedEquipmentPlacesFilter } from './useAppliedEquipmentPlacesFilter';
+ export { useAppliedPatientPlacesFilter } from './useAppliedPatientPlacesFilter';
++export { useFirstAvailableDateTime } from './useFirstAvailableDateTime';
+\ No newline at end of file
+diff --git a/src/features/AppointmentsScheduler/hooks/useFirstAvailableDate.tsx b/src/features/AppointmentsScheduler/hooks/useFirstAvailableDate.tsx
+deleted file mode 100644
+index 503ed30..0000000
+--- a/src/features/AppointmentsScheduler/hooks/useFirstAvailableDate.tsx
++++ /dev/null
+@@ -1,28 +0,0 @@
+-import { useMemo } from 'react';
+-import { useAppointmentsSummaryStore } from '~/features/AppointmentsScheduler/store';
+-
+-/**
+- * Hook para obtener la primera fecha disponible desde el store
+- * Usa el campo `primerOfertaDisponible` de la respuesta del backend
+- */
+-export const useFirstAvailableDate = () => {
+-  const primerOfertaDisponible = useAppointmentsSummaryStore(
+-    (state) => state?.primerOfertaDisponible
+-  );
+-
+-  const firstAvailableDate = useMemo(() => {
+-    if (!primerOfertaDisponible) return null;
+-
+-    try {
+-      return new Date(primerOfertaDisponible);
+-    } catch (error) {
+-      console.warn('Error parsing primerOfertaDisponible:', error);
+-      return null;
+-    }
+-  }, [primerOfertaDisponible]);
+-
+-  return {
+-    firstAvailableDate,
+-    isLoading: !primerOfertaDisponible, // Si no hay dato, asumimos que está cargando
+-  };
+-};
